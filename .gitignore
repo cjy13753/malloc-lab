@@ -56,3 +56,4 @@ dkms.conf
 
 # etc.
 .vscode/
+mm_seg.c
