@@ -1,52 +1,105 @@
-#####################################################################
-# CS:APP Malloc Lab
-# Handout files for students
-#
-# Copyright (c) 2002, R. Bryant and D. O'Hallaron, All rights reserved.
-# May not be used, modified, or copied without permission.
-#
-######################################################################
+# Dynamic Memory Allocator 정리
+아래 정리를 읽기 전 미래의 내가 참고해야할 사항
+1. 정글 Week 06 동안 내가 소화한 만큼의 내용만 아래에 정리되어 있다. 따라서 아래에서 자세한 내용을 기대하면 안 된다. 보다 자세한 내용은 당연하게도 CSAPP 3rd 9.9 단원 및 [CMU대학의 저자직강](https://scs.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=d69a8072-3d23-4604-8081-0edeba33bb52)을 참고하도록 한다.
+1. 내가 소화한 만큼의 내용이 정리되어 있기 때문에 틀린 내용이 포함되어 있을 수 있다. 복습할 때 틀린 부분을 보게 되면 수정하고 새로운 내용으로 업데이트 할 수 있도록 한다.
+1. Explicit free list를 제외하고 Implict free list와 Segregated free list에 대한 내용만 정리되어 있다. 
 
-***********
-Main Files:
-***********
+## Dynamic memory allocator는 어떤 역할을 하길래 중요한가?
+Application이 필요로 하는 데이터의 크기를 runtime 전까지 알 수 없을 때, 만약 static하게 (1)미리 말도 안 되게 크게 memory를 할당해주거나 (2)느낌상 적당하게 memory를 할당해준다면? (1)의 문제는 internal fragmentation(이 개념은 밑에서 더 자세히)의 정도가 심화되어 memory utilization이 크게 떨어진다. 요즘 main memory의 크기가 과거에 비해 비약적으로 늘었다고 하지만 여전히 memory는 한정된 자원이라는 것을 명심해야 한다. (2)의 문제는 예상을 초과하는 memory가 필요하게 된다면 에러가 발생하거나, application을 종료시킨 후 memory를 더 크게 할당해주고 다시 컴파일 후 application 재실행을 해줘야 한다. software engineer의 생산성이 떨어지고, application 사용자의 눈은 뒤집어진다.
 
-mm.{c,h}	
-	Your solution malloc package. mm.c is the file that you
-	will be handing in, and is the only file you should modify.
+그렇다면 dynamic memory allocator는 이 문제를 어떻게 해결해줄까? 이름 그대로, runtime에 application의 요청에 의해 필요로 하는 만큼의 메모리를 동적으로 할당해준다. 동적으로 할당해준다는 의미는 application의 요청에 의해 메모리를 할당해주기도 하고, 할당했던 메모리의 크기를 늘였다 줄였다도 하고, 메모리를 더이상 쓸 일이 없어졌을 때는 아예 시스템에 반납도 할 수 있게 해준다는 의미다. 이 모든 게 runtime에 이뤄질 수 있게 해주는 것이 가장 큰 특징이다.
 
-mdriver.c	
-	The malloc driver that tests your mm.c file
+## 잠깐, Dynamic memory allocator는 어디에서 memory를 가져와서 할당해주고, 반납해준다는 것인가?
+Application이 사용하는 메모리 영역은 여러 `segment`로 범주화되어 관리된다. 크게 text segment, data segment, bss segment, heap segment, stack segment로 나뉜다. 이 heap segment는 다양한 사이즈의 free block과 allocated block들로 이루어져있다. application이 dynamic memory allocator에게 메모리 할당을 요청하면, 적당한 free block을 찾아서 이 free block에 대한 pointer를 application에게 반환해주고 해당 free block을 allocated 되었다고 기입해둔다. 만약 application이 요청하는 사이즈의 free block을 찾을 수 없다면, sbrk라는 system call을 통해서 시스템으로부터 더 많은 메모리를 할당 받는다. 이를 통해 적절한 사이즈의 free block을 확보하고, 이에 대한 포인터를 application에게 반환해준다. 참고로 sbrk를 호출하면 아래 그림과 같이 brk pointer를 위로 올리거나 낮춤으로써 heap memory를 증가시키거나 감소시킬 수 있다.
+</br>
+![image](https://user-images.githubusercontent.com/61924861/146184395-945453f6-af8e-4586-bef7-ff360dced6c7.png)
+</br>
+출처: CSAPP 3rd
 
-short{1,2}-bal.rep
-	Two tiny tracefiles to help you get started. 
+## Dynamic memory allocator가 대충 어떤 역할을 하는지 알겠다. 그렇다면 실제로 구현을 할 때 어떤 것들을 중요하게 고려해야 하는가?
+Dynamic memory allocator 성능을 측정하는 대표적인 지표는 `memory utilization`과 `throughput`이다. memory utilization은 쉽게 말해 heap segment를 낭비하는 공간 없이 application이 필요한 데이터를 얼마나 꽉 채워서 썼는가이다. throughput은 쉽게 말해 얼마나 빨리 application의 allocate/free 요청을 처리해줄 수 있는가이다. 이 두 성능 지표는 trade-off 관계에 있기 때문에 적절히 밸런스를 맞추는 것이 중요하다. Trade-off 관계에 있다고 하면 왜 그런지 바로 공감이 안 될 수 있어서 예시를 하나 들어보겠다. throughput을 높이기 위해서 dynamic memory allocator는 free block이나 allocated block 여러 bookkeeping 정보를 담을 수 있다. 이들 정보를 적절히 활용하여 allocator는 allocate/free 요청을 빠르게 처리할 수 있게 된다. 하지만 이들 overhead 정보는 위에서 application이 저장하고 싶은 정보가 아니기 때문에 언급한 '낭비 공간'에 해당하고, 따라서 memory utilization을 갉아 먹는다.
 
-Makefile	
-	Builds the driver
+memory utilization과 throughput에 영향을 끼치는 중요한 구현요소로는 다음과 같은 것들이 있다:
+1. free block organization: 
+	- 위에서 언급했듯이 heap segment는 array of bytes이고 이 array가 다양한 size의 free block과 allocated block으로 뒤섞여 채워져있다. 이런 상황에서 어떤 방식으로 free block들을 추적 관리할 것인가에 관한 것이 free block organization이다. free block들을 일종의 list 형태로 추적 관리하고 크게 3가지 방식이 있는데, implicit free list, explicit free list, segregated free list가 있다. `어떤 종류의 free block organization을 채택하느냐에 따라 free block format, placing 방식, splitting 방식, coalescing 방식이 모두 달라질 수 있다.`
+1. placing:
+	- application으로부터 memory를 할당해달라는 요청을 받았을 때, dynamic memory allocator는 위에서 결정된 free block organization에 따라 사용하고 있는 free list에서 적절한 free block을 찾아야 한다. 이때 이때 이 free block을 찾는 방식에 관한 것이 placing이다. 적절한(fit) free block을 찾는 방식으로 크게 3가지 방식이 있는데, first-fit, next-fit, best-fit이 있다.
+1. splitting:
+	- fit한 free block을 찾고나서 해당 블록을 allocated로 표식해놓고 application한테 해당 block에 대한 pointer를 바로 반환할 수도 있다. 하지만 만약 해당 free block이 application이 요청한 사이즈보다 훨씬 클 경우 이 block을 통째로 application에게 주면 낭비가 되지 않을까(internal fragmentation)? 이 낭비를 줄이기 위해서, free block을 적절히 2개의 block으로 쪼개서 필요한 만큼만 allocated 처리하고 나머지 block은 free 상태로 처리해놓을 수 있다.
+1. coalescing:
+	- splitting 이후 생성된 free block의 앞 뒤로 만약 또다른 free block이 존재한다면 해당 블록들을 합쳐놓는 게 좋을 수 있다. External fragmentation을 막기 위함이다. 만약 heap에 크기가 4인 free block이 2개가 contiguous하게 존재하는데, applicaiton이 memory 할당을 요청한 사이즈가 5라면 free list에서 fit한 크기의 free block을 찾지 못해 NULL을 반환하거나 sbrk 시스템 콜을 이용해서 heap을 불필요하게 늘려야 할 수도 있다. 이런 경우를 막기 위해 연속적으로 존재하는 free block을 미리 합쳐놓는 작업을 해둘 수도 있는데, 이를 coalescing이라고 한다.
 
-**********************************
-Other support files for the driver
-**********************************
+\* Internal fragmentation, external fragmentation 얘기가 자주 나오니, 한 번 간단히 정리하고 넘어가자.
+fragmentation 자체의 의미는 사용가능한 메모리가 여기저기 쪼개져 있어 제대로 활용할 수 없는 현상을 말한다. 당연히 memory utilization을 극대화하는 데 방해 요소가 된다.
+Internal fragmentation은 파편화된 메모리 쪼가리가 allocated된 block 내부에 있어 활용할 수 없는 경우를 말한다. 예를 들어, 크기가 1000 bytes 짜리 allocated block이 있는데 실질적인 payload는 4 bytes이고 나머지는 bookkeping 정보와 padding으로 채워져있다면 memory allocator 입장에서 bookkeeping 정보와 padding 만큼 사용가능한 메모리가 파편화되어 있다고 볼 수 있다.
+External fragmentation은 free block들이 작은 사이즈로 여기저기 파편화되어 존재하는 경우를 말한다. 하나의 큰 free block으로 존재하지 않고, 작은 사이즈로 다수의 free block들이 존재하게 되면, free block들을 합쳤을 때의 크기가 application이 요구하는 사이즈의 블록을 내어줄 수도 있지만 파편화되어 존재해서 내어주지 못하는 상황이 있을 수 있다.
 
-config.h	Configures the malloc lab driver
-fsecs.{c,h}	Wrapper function for the different timer packages
-clock.{c,h}	Routines for accessing the Pentium and Alpha cycle counters
-fcyc.{c,h}	Timer functions based on cycle counters
-ftimer.{c,h}	Timer functions based on interval timers and gettimeofday()
-memlib.{c,h}	Models the heap and sbrk function
+## Free block organization 구현 방식에 대해서 좀 더 자세히 알아보도록 하자. 특히 implicit free list와 segregated free list에 대해서 정리해보도록 하자.
+라인 바이 라인 설명은 코드에 주석으로 자세히 달아놨으니, overall idea에 대해서 추후 다시 이 자료를 보자마자 떠올릴 수 있도록 핵심만 간단하게 정리하는 것을 목표로 한다.
+### implicit free list organization
+### segregated free list organization
 
-*******************************
-Building and running the driver
-*******************************
-To build the driver, type "make" to the shell.
+## 특기할 만한 Minor details 
+1. CSAPP 3rd 교과서에서 gcc -m32로 컴파일 하는 이유는?
+32-bit mode로 컴파일된 코드에서는 malloc이 8-bytes alignment로 memory block을 할당하고,
+64-bit mode로 컴파일된 코드에서는 malloc이 16-bytes alignment로 memory block을 할당한다.
+gcc로 컴파일 하면 디폴트로 64-bit mode로 컴파일 하고, gcc -m32로 컴파일 하면 32-bit mode로 컴파일 한다. 우리 책 CSAPP의 malloc lab에서는 8-bytes alignment 할당하는 것을 전제하기로 했기 때문에 gcc -m32로 컴파일 해야 한다.
+> 뒤따르는 질문. 32 bit mode로 컴파일한다는 게 무슨 의미인가? 
+-> 일단 어렴풋하게 이해하고 있는 것. 컴파일을 하면 나중에 프로그램이 메모리에 로드됐을 때 어떤 데이터가 어느 가상 주소에 저장될지에 대한 정보가 저장된다. 그런데 만약 64 bit mode로 컴파일 됐다면, 가상 주소가 이론적으로 \[0~2^64-1]의 범위에서 지정될 것이기 때문에, 32 bit processor에서 다룰 수 없는 주소값이 튀어나와 실행이 안 될 수 있음.
+</br>
 
-To run the driver on a tiny test trace:
+1. Block을 8 bytes aligned 한다는 의미와 이유는?
+-> 참고자료 1: 교과서 - Block을 align 하는 이유는 to hold any type of data object 이고 거의 모든 데이터 타입은 8바이트가 최고. 그래서 8 bytes align.
+![](https://images.velog.io/images/cjy13753/post/fe42ab4d-68fe-42f9-a60c-cf0670043143/image.png)
+-> 참고자료 2: 인터넷 [E.g. if a system requires int to be 4 byte aligned and long to be 8 byte aligned, malloc() must return memory that is 8 byte aligned because it cannot know if you are going to cast the result to to int or to long. Theoretically, if you request less than sizeof(long) bytes, a cast to long * is invalid as a long would not even fit into that memory. One might think that in that case malloc() could choose a smaller alignment but that's not what the standard says. The alignment requirement in the standard does not depend on the size of the allocation!](https://newbedev.com/which-guarantees-does-malloc-make-about-memory-alignment)
 
-	unix> mdriver -V -f short1-bal.rep
 
-The -V option prints out helpful tracing and summary information.
+1. 32 bit vs. 64 bit processors에서 각각의 bit가 의미하는 바
+보통 processor register, data bus, address bus의 size라고 한다.
 
-To get a list of the driver flags:
+1. heap list에서 first word를 unused padding으로 하는 이유(pdf 880)
+prologue block이 1 word-size header와 1 word-size footer로 총 2 words를 차지하고, epilogue block hdr가 1 word-size header를 차지해서, prologue와 epilogue 합쳐 총 3 words를 차지하게 됨. 그런데 heap은 double-word align이 되어야 하기 때문에 prologue block와 epilogue block을 합쳐서 4 words를 차지하거나 (4+2\*n) 크기의 words를 차지해야 함. 이걸 맞춰주기 위해서 heap의 맨 앞에 1 word-size unused padding을 붙여주는 것임. 그러면 왜 double word align 조건이 있냐에 대한 궁금증이 떠오른다면 위에 임시로 정리한 거 참고하기.
 
-	unix> mdriver -h
+1. pdf883 epilogue header 갈아끼우면서 헷갈림
+아래 코드에서 next_blkp(bp)를 해버리면 malloc이 할당하던 공간을 벗어나서 문제가 되는 거 아닌가 싶었는데, 생각해보니 문제 없음. malloc이 할당한 공간 이외이긴 하지만, 그 공간에 접근해서 어떤 값을 읽거나 쓰는 게 아니라, 그냥 주소의 값만 보관하고 있는 것이기 때문.
+``` c
+static void *extend_heap(size_t words)
+{
+    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); /* New epilogue header */
+}
+```
 
+1. pdf 885에서 prev_alloc을 구할 때 GET_ALLOC(HDRP(PREV_BLKP(bp))) 하지 않는 이유?? FTRP는 HDRP에 비해 더 복잡한데 굳이 이렇게 하는 이유는?
+``` c
+static void *coalesce(void *bp)
+{
+    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
+    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
+}
+```
+
+1. next_fit을 구현할 때 segmentation fault가 발생하는 이유
+coalesce 함수가 돌 때 마지막 bp 를 last_fit에 넣어주는 작업을 안 하면, last_fit이 잘못된 곳에 위치하게 된다. 이걸 떠올리는 게 정말 힘들었음.
+
+1. find_fit 과정에서 last_fit은 고려 대상 안 넣으면 mem_sbrk failed. Ran out of memory... 뜨는 이유:
+엣지 케이스: last_fit만 free이고, 나머지 block들은 allocated 상태이고, 새로 요구되는 블록의 크기가 last_fit block에 들어갈 수 있는 사이즈일 때 무한으로 extend_heap을 요청하게 돼서임.
+
+1. minimum block size를 결정하는 요소는?
+block alignment policy & footer와 header의 포함 여부
+
+1. bit manipulation
+- segregated list code에서 다음 코드가 책 설명을 들어서 무슨 내용인지는 알겠는데 직관적으로 와닿지 않음
+``` c
+while ((list < LISTLIMIT - 1) && (size > 1)) {
+	size >>= 1;
+    list++;
+```
+
+1. pointer를 형변환해주는 이유는 dereferencing을 하기 위함.
+pointer는 내가 읽고 싶은 자료의 맨 앞 바이트 주소값을 가리킨다. 포인터가 가리키는 자료 전체를 읽어들이기(dereference) 위해서는 컴파일러에게 맨 앞 바이트 주소부터 그 뒤로 얼마만큼의 바이트를 함께 읽어들여야 하는지 알려줘야 한다. 만약 포인터가 가리키는 자료형이 void라면 컴파일러 입장에서는 얼마만큼의 바이트를 읽어들여야 할지 알 수 없다. 즉, 포인터에 대한 dereferencing을 할 수 없다. 따라서 포인터 변수를 적절한 자료형에 대한 포인터로 형변환해줘야 한다.
+그렇다면 void \*를 왜 쓸까 하는 의문이 들 수 있다. 그냥 char *, int * 등등으로 명시적으로 표현해주면 되지 않는가? 함수가 파라미터로 받아들여야 하는 포인터가 어떤 자료형에 대한 포인터인지 알 수 없을 수 있기 때문이다. void *는 모든 종류의 포인터 자료형을 받을 수 있기 때문이다. 
+우리 Malloc lab에서의 coalesce 함수가 적절한 예시이다. 이거 나중에 더 자세히 적기로.
+
+
+## 당장 해결이 안 되고 추후 더 자세히 알아보고 정리가 필요한 내용
+- allocated block에서는 footer가 안 필요한데, free block에서는 footer가 필요한 이유(pdf 877). current block(block that we want to free)의 footer의 excess lower-order bits에 에 previous block이 allocated/free 여부를 저장한다고 하는데, 도대체 어느 시점에 current block이 previous block의 allocated/free 여부를 알고 저장한거지? 이거랑 맞물려서, previous block이 만약 allocated이고 이 정보를 current block이 저장했다면, previous block이 footer를 가지고 있을 필요가 없어서, 그 만큼을 payload에 할당할 수 있다고 하는데, previous block이 footer를 가지고 있다가 그걸 없애고, 그만큼의 공간에 추가 정보를 담는다는 말인가? 추가 정보를 footer 만큼의 공간에만 담는 게 가능한가?
