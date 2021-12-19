@@ -1,4 +1,4 @@
-# Dynamic Memory Allocator 정리
+# Dynamic Memory Allocator in my words
 아래 정리를 읽기 전 미래의 내가 참고해야할 사항
 1. 정글 Week 06 동안 내가 소화한 만큼의 내용만 아래에 정리되어 있다. 따라서 아래에서 자세한 내용을 기대하면 안 된다. 보다 자세한 내용은 당연하게도 CSAPP 3rd 9.9 단원 및 [CMU대학의 저자직강](https://scs.hosted.panopto.com/Panopto/Pages/Viewer.aspx?id=d69a8072-3d23-4604-8081-0edeba33bb52)을 참고하도록 한다.
 1. 내가 소화한 만큼의 내용이 정리되어 있기 때문에 틀린 내용이 포함되어 있을 수 있다. 복습할 때 틀린 부분을 보게 되면 수정하고 새로운 내용으로 업데이트 할 수 있도록 한다.
@@ -34,72 +34,52 @@ fragmentation 자체의 의미는 사용가능한 메모리가 여기저기 쪼�
 Internal fragmentation은 파편화된 메모리 쪼가리가 allocated된 block 내부에 있어 활용할 수 없는 경우를 말한다. 예를 들어, 크기가 1000 bytes 짜리 allocated block이 있는데 실질적인 payload는 4 bytes이고 나머지는 bookkeping 정보와 padding으로 채워져있다면 memory allocator 입장에서 bookkeeping 정보와 padding 만큼 사용가능한 메모리가 파편화되어 있다고 볼 수 있다.
 External fragmentation은 free block들이 작은 사이즈로 여기저기 파편화되어 존재하는 경우를 말한다. 하나의 큰 free block으로 존재하지 않고, 작은 사이즈로 다수의 free block들이 존재하게 되면, free block들을 합쳤을 때의 크기가 application이 요구하는 사이즈의 블록을 내어줄 수도 있지만 파편화되어 존재해서 내어주지 못하는 상황이 있을 수 있다.
 
-## Free block organization 구현 방식에 대해서 좀 더 자세히 알아보도록 하자. 특히 implicit free list와 segregated free list에 대해서 정리해보도록 하자.
-라인 바이 라인 설명은 코드에 주석으로 자세히 달아놨으니, overall idea에 대해서 추후 다시 이 자료를 보자마자 떠올릴 수 있도록 핵심만 간단하게 정리하는 것을 목표로 한다.
-### implicit free list organization
-### segregated free list organization
+## Free block organization 구현 방식에 대해서 좀 더 자세히 알아보도록 하자. 
+코드의 라인 바이 라인 설명은 implicit free list 구현의 경우 [내 깃헙 레포 mm.c](https://github.com/cjy13753/malloc-lab/blob/main/mm.c) 파일에, segregated free list 구현의 경우 [mm_segre.c](https://github.com/cjy13753/malloc-lab/blob/main/mm_segre.c)에 주석으로 자세히 달아놨으니, 큰 개념만 정리하는 것을 목표로 한다.
+- implicit free list organization
+	- Implicit의 의미를 짚고 넘어가는 것이 중요하다. implicit free list organization에서는 free block list에 있는 free block들 간의 관계가 명시적으로 나타나있지 않고 `암묵적`으로 나타난다. 구현에 따라 다르지만 보통 implicit free list에서는 free block의 header에 각 free block의 사이즈와 allocated 여부 정보가 담긴다. block 크기 정보를 바탕으로 포인터의 위치를 옮겨 다음 블록을 보고, 그 블록이 allocated 되었는지 확인하는 식으로 다음 free block을 찾아간다. explicit free list와 대조해서 보면 이 특징이 더 잘보인다. explicit free list organization에서는 각 free block에 사이즈 정보뿐만 아니라, 이전과 다음 free block에 대한 포인터를 `명시적`으로 가지고 있어서, 중간의 allocated block을 건너뛰고 한 번에 다음 free block으로 넘어갈 수 있다.
+	- Implicit free list organization에서 memory allocate 요청에 대응하는 방식에 대해 정리해보자. 메모리 할당은 free block을 먼저 찾는 것에서 시작한다. free block을 찾는 방식으로는 크게 3가지가 있다: `first-fit`, `best-fit`, `next-fit`. Implicit free list에서의 `first-fit`은 heap의 처음부터 뒤지기 시작해서, 처음으로 발견하는 free block을 할당해주는 것을 의미한다. heap의 처음부터 뒤지기 때문에 만약 heap의 초반에 크기가 작은 free block들만 많이 남아있다면, 탐색 과정에서 큰 비효율이 발생해 throughput이 떨어질 수 있다. 또한 application으로부터 요청 받은 메모리 할당 사이즈보다 탐색 과정에서 찾은 free block이 훨씬 크더라도 이를 무시하기 때문에, 할당 후 split을 통해 남은 공간을 다시 free block list에 돌려준다 하더라도, external fragmentation으로 이어질 수 있다. 이런 external fragmentation 문제를 해결하기 위해, `best-fit`을 사용할 수도 있다. best-fit의 경우 힙 전체를 다 뒤져서 application으로부터 요청 받은 사이즈와 가장 크기가 비슷한 free block을 찾아서 할당해주기 때문에 free block이 split 되면서 발생하는 external fragmentation의 정도를 감소시킬 수 있다. 하지만 매번 메모리를 할당할 때마다 힙에 존재하는 모든 block을 다 뒤져야 하기 때문에 throughput이 크게 떨어질 수 있다. 마지막으로 `next-fit`에서는 가장 마지막으로 할당된 블록에 대한 정보를 잘 보관하고 있다가, application의 다음 메모리 할당 요청 시 가장 마지막으로 찾았던 free block의 다음 block부터 탐색해서 최초로 발견되는 block을 할당해주는 방식이다. 이 방식은 힙의 초반에 크기가 작은 free block들이 널부러져 있고, 힙의 후반으로 갈수록 크기가 널럴할 free block이 많을 확률이 높은 점을 적극 활용하는 방식이다. first-fit 방식에 비해 throughput을 향상시킬 수 있다.
+- segregated free list organization
+	- 다수의 explicit free list(링크드리스트)가 사이즈군(size class) 별로 구분되어(segregated) 존재하는 방식이다. size class를 정의하는 방식은 매우 다양할 수 있는데, 책에서 소개하는 방식은 2의 지수함수로 분류한다. 예를 들어, 사이즈가 1~2면 class 0, 사이즈가 3~4면 class 1, 5~8이면 class 2, 9~15이면 class 3, 16~32면 class 4...와 같은 식이다. 이렇게 size class를 나눌 때의 장점을 와닿게 이해하기 위해 first-fit 방식으로 메모리 할당을 하는 예시를 들겠다. 만약 application이 요구하는 메모리 할당 사이즈가 n이라고 하자. size class가 2의 지수함수로 구분되어 있기 때문에 O(logn)의 속도로 어떤 size class의 explicit free list에 속하는지를 찾을 수 있다. 그리고 그 explicit free list에 속하는 free block들 중 가장 처음에 존재(first-fit)하는 free block을 application에 할당해준다. 이렇게 할 경우 throughput과 memory utilization 차원에서 큰 개선이 가능해진다. Implicit free list에서는 fit block을 찾는 방식이 무엇이든 탐색의 time complexity는 O(n)이 된다. 하지만 segregated free list에서는 O(logn)으로 크게 감소된다. 또한 size class별로 구분해서 할당해주기 때문에 first-fit으로 탐색하면서도 implicit free list에서의 best-fit 방식과 유사한 memory utilization 성능을 나타낼 수 있다. 실제로 production-level dynamic memory allocator에는 segregated free list 방식이 많이 적용된다고 한다.
 
 ## 특기할 만한 Minor details 
-1. CSAPP 3rd 교과서에서 gcc -m32로 컴파일 하는 이유는?
-32-bit mode로 컴파일된 코드에서는 malloc이 8-bytes alignment로 memory block을 할당하고,
-64-bit mode로 컴파일된 코드에서는 malloc이 16-bytes alignment로 memory block을 할당한다.
-gcc로 컴파일 하면 디폴트로 64-bit mode로 컴파일 하고, gcc -m32로 컴파일 하면 32-bit mode로 컴파일 한다. 우리 책 CSAPP의 malloc lab에서는 8-bytes alignment 할당하는 것을 전제하기로 했기 때문에 gcc -m32로 컴파일 해야 한다.
-> 뒤따르는 질문. 32 bit mode로 컴파일한다는 게 무슨 의미인가? 
--> 일단 어렴풋하게 이해하고 있는 것. 컴파일을 하면 나중에 프로그램이 메모리에 로드됐을 때 어떤 데이터가 어느 가상 주소에 저장될지에 대한 정보가 저장된다. 그런데 만약 64 bit mode로 컴파일 됐다면, 가상 주소가 이론적으로 \[0~2^64-1]의 범위에서 지정될 것이기 때문에, 32 bit processor에서 다룰 수 없는 주소값이 튀어나와 실행이 안 될 수 있음.
-</br>
+1. CSAPP3rd Malloc-lab에서 gcc -m32로 컴파일 하는 이유는?
+	- 실습 파일을 보면 포인터 자료형 사이즈가 4 bytes인 걸 전제하고 포인터 관련 작업들이 수행된다. gcc의 default인 64 bit mode로 컴파일할 경우, 포인터 사이즈가 8 bytes가 되기 때문에 제대로 작동할 수 없다. 단적인 예로 다음 매크로를 보자.
+		``` c
+		#define PRED(bp) (*(char **)(bp))
+		``` 
+		bp(block pointer)를 가지고 predecessor block에 대한 포인터를 얻기 위한 매크로이다. 우선 현재 코드에서는 predecessor pointer가 4 bytes로 저장되어 있다. 위 매크로를 기계적으로 해석하면 bp를 포인터(에 대한 포인터)로 형변환했기 때문에 dereference를 하면 32 bit mode compiler에서는 4 bytes를 읽어들이고, 64 bit mode compiler에서는 8 bytes를 읽어들인다. 따라서 64 bit mode compiler로 우리의 코드를 컴파일해버리면 위의 PRED 매크로가 제대로 동작할 수 없다.
 
-1. Block을 8 bytes aligned 한다는 의미와 이유는?
--> 참고자료 1: 교과서 - Block을 align 하는 이유는 to hold any type of data object 이고 거의 모든 데이터 타입은 8바이트가 최고. 그래서 8 bytes align.
-![](https://images.velog.io/images/cjy13753/post/fe42ab4d-68fe-42f9-a60c-cf0670043143/image.png)
--> 참고자료 2: 인터넷 [E.g. if a system requires int to be 4 byte aligned and long to be 8 byte aligned, malloc() must return memory that is 8 byte aligned because it cannot know if you are going to cast the result to to int or to long. Theoretically, if you request less than sizeof(long) bytes, a cast to long * is invalid as a long would not even fit into that memory. One might think that in that case malloc() could choose a smaller alignment but that's not what the standard says. The alignment requirement in the standard does not depend on the size of the allocation!](https://newbedev.com/which-guarantees-does-malloc-make-about-memory-alignment)
-
+1. 우리 교과서에서 block을 8 bytes aligned 한다는 의미와 이유는?
+	- unused padding과 epilogue header 제외한 모든 block의 크기는 8의 배수이다. 또한  payload를 가리키는 포인터(segregated free list에서는 predecessor pointer)는 아래 그림과 같이 8의 배수를 주소값으로 가진다.![image](https://user-images.githubusercontent.com/61924861/146671409-c7cf85b3-0a79-42a1-9589-44e33607551e.png)</br>출처: CSAPP3rd
+	- 교과서에 따르면 block aligning을 하는 이유는 `hold any type of data object`를 위함이라고 한다. 사실 거의 모든 데이터 타입은 8바이트가 최고다.
 
 1. 32 bit vs. 64 bit processors에서 각각의 bit가 의미하는 바
-보통 processor register, data bus, address bus의 size라고 한다.
+	- 보통 processor register, data bus, address bus의 size라고 한다.
 
 1. heap list에서 first word를 unused padding으로 하는 이유(pdf 880)
-prologue block이 1 word-size header와 1 word-size footer로 총 2 words를 차지하고, epilogue block hdr가 1 word-size header를 차지해서, prologue와 epilogue 합쳐 총 3 words를 차지하게 됨. 그런데 heap은 double-word align이 되어야 하기 때문에 prologue block와 epilogue block을 합쳐서 4 words를 차지하거나 (4+2\*n) 크기의 words를 차지해야 함. 이걸 맞춰주기 위해서 heap의 맨 앞에 1 word-size unused padding을 붙여주는 것임. 그러면 왜 double word align 조건이 있냐에 대한 궁금증이 떠오른다면 위에 임시로 정리한 거 참고하기.
+	- (1 word=4bytes 전제) implicit free list에서 prologue block이 1 word-size header와 1 word-size footer로 총 2 words를 차지한다. 만약 그 다음 블록이 온다면, 1 word-size header가 오게 돼서 실제 payload 앞에 3 words만 존재하게 된다. 그러면 payload를 가리키는 pointer의 주소값 12가 되어 8의 배수가 될 수 없다. 이걸 맞춰주기 위해서 1 word size unused padding이 heap의 맨 앞에 붙게 되는 것이다.
 
-1. pdf883 epilogue header 갈아끼우면서 헷갈림
-아래 코드에서 next_blkp(bp)를 해버리면 malloc이 할당하던 공간을 벗어나서 문제가 되는 거 아닌가 싶었는데, 생각해보니 문제 없음. malloc이 할당한 공간 이외이긴 하지만, 그 공간에 접근해서 어떤 값을 읽거나 쓰는 게 아니라, 그냥 주소의 값만 보관하고 있는 것이기 때문.
-``` c
-static void *extend_heap(size_t words)
-{
-    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); /* New epilogue header */
-}
-```
-
-1. pdf 885에서 prev_alloc을 구할 때 GET_ALLOC(HDRP(PREV_BLKP(bp))) 하지 않는 이유?? FTRP는 HDRP에 비해 더 복잡한데 굳이 이렇게 하는 이유는?
-``` c
-static void *coalesce(void *bp)
-{
-    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
-    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
-}
-```
+1. heap 영역 밖 주소값 (pdf883)
+	- 아래 extend_heap 함수에서 NEXT_BLKP(bp)를 해버리면 malloc이 할당하던 공간을 벗어나서 문제가 되는 거 아닌가 싶었는데, 생각해보니 문제 없다. malloc이 할당한 공간 밖이긴 하지만, 그 공간에 접근해서 어떤 값을 읽거나 쓰는 게 아니라, 그냥 주소의 값만 보관하고 있는 것이기 때문이다.
+		``` c
+		#define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(HDRP(bp)))
+		#define HDRP(bp) ((char *)(bp) - WSIZE)
+			
+		static void *extend_heap(size_t words)
+		{
+			/* 생략 */
+			PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); /* New epilogue header */
+			/* 생략 */
+		}
+		```
 
 1. next_fit을 구현할 때 segmentation fault가 발생하는 이유
-coalesce 함수가 돌 때 마지막 bp 를 last_fit에 넣어주는 작업을 안 하면, last_fit이 잘못된 곳에 위치하게 된다. 이걸 떠올리는 게 정말 힘들었음.
+	- 만약 어쩌다 coalesce 함수가 돌아서 last_fit 포인터가 가리키던 블록이 앞 혹은 뒤 block과 coalesce하게 된다면 bp를 갱신해줘야 한다. 이걸 안 하면 last_fit 포인터가 이상한 곳을 가리키게 돼서 segmentation fault가 발생할 수 있다.
 
-1. find_fit 과정에서 last_fit은 고려 대상 안 넣으면 mem_sbrk failed. Ran out of memory... 뜨는 이유:
-엣지 케이스: last_fit만 free이고, 나머지 block들은 allocated 상태이고, 새로 요구되는 블록의 크기가 last_fit block에 들어갈 수 있는 사이즈일 때 무한으로 extend_heap을 요청하게 돼서임.
+1. find_fit 과정에서 last_fit은 고려 대상 안 넣으면 `mem_sbrk failed. Ran out of memory...` 뜨는 이유
+	- 엣지 케이스가 존재학 때문이다. last_fit만 free block이고, 나머지 block들은 allocated 상태이고, 새로 요구되는 블록의 크기가 last_fit block에 들어갈 수 있는 사이즈일 때 무한으로 extend_heap을 요청하게 될 수 있다.
 
-1. minimum block size를 결정하는 요소는?
-block alignment policy & footer와 header의 포함 여부
-
-1. bit manipulation
-- segregated list code에서 다음 코드가 책 설명을 들어서 무슨 내용인지는 알겠는데 직관적으로 와닿지 않음
-``` c
-while ((list < LISTLIMIT - 1) && (size > 1)) {
-	size >>= 1;
-    list++;
-```
-
-1. pointer를 형변환해주는 이유는 dereferencing을 하기 위함.
-pointer는 내가 읽고 싶은 자료의 맨 앞 바이트 주소값을 가리킨다. 포인터가 가리키는 자료 전체를 읽어들이기(dereference) 위해서는 컴파일러에게 맨 앞 바이트 주소부터 그 뒤로 얼마만큼의 바이트를 함께 읽어들여야 하는지 알려줘야 한다. 만약 포인터가 가리키는 자료형이 void라면 컴파일러 입장에서는 얼마만큼의 바이트를 읽어들여야 할지 알 수 없다. 즉, 포인터에 대한 dereferencing을 할 수 없다. 따라서 포인터 변수를 적절한 자료형에 대한 포인터로 형변환해줘야 한다.
-그렇다면 void \*를 왜 쓸까 하는 의문이 들 수 있다. 그냥 char *, int * 등등으로 명시적으로 표현해주면 되지 않는가? 함수가 파라미터로 받아들여야 하는 포인터가 어떤 자료형에 대한 포인터인지 알 수 없을 수 있기 때문이다. void *는 모든 종류의 포인터 자료형을 받을 수 있기 때문이다. 
-우리 Malloc lab에서의 coalesce 함수가 적절한 예시이다. 이거 나중에 더 자세히 적기로.
-
-
-## 당장 해결이 안 되고 추후 더 자세히 알아보고 정리가 필요한 내용
-- allocated block에서는 footer가 안 필요한데, free block에서는 footer가 필요한 이유(pdf 877). current block(block that we want to free)의 footer의 excess lower-order bits에 에 previous block이 allocated/free 여부를 저장한다고 하는데, 도대체 어느 시점에 current block이 previous block의 allocated/free 여부를 알고 저장한거지? 이거랑 맞물려서, previous block이 만약 allocated이고 이 정보를 current block이 저장했다면, previous block이 footer를 가지고 있을 필요가 없어서, 그 만큼을 payload에 할당할 수 있다고 하는데, previous block이 footer를 가지고 있다가 그걸 없애고, 그만큼의 공간에 추가 정보를 담는다는 말인가? 추가 정보를 footer 만큼의 공간에만 담는 게 가능한가?
+1. pointer를 형변환해주는 이유는 dereferencing을 하기 위함이다.
+	- pointer는 내가 읽고 싶은 자료의 맨 앞 바이트 주소값을 보관한다. 포인터가 가리키는 자료 전체를 읽어들이기(dereference) 위해서는 컴파일러에게 맨 앞 바이트 주소부터 시작해서 그 뒤로 얼마만큼의 바이트를 함께 읽어들여야 하는지 알려줘야 한다. 만약 포인터가 가리키는 자료형이 void라면 컴파일러 입장에서는 얼마만큼의 바이트를 읽어들여야 할지 알 수 없다. 즉, 포인터에 대한 dereferencing을 할 수 없다. 따라서 포인터 변수를 적절한 자료형에 대한 포인터로 형변환해줘야 한다.
+	- 그렇다면 void \*를 왜 쓸까 하는 의문이 들 수 있다. 그냥 char *, int * 등등으로 명시적으로 표현해주면 되지 않는가? 함수가 파라미터로 받아들여야 하는 포인터가 어떤 자료형에 대한 포인터인지 알 수 없을 수 있기 때문이다. void *는 모든 종류의 포인터 자료형을 받을 수 있다. 
